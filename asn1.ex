@@ -292,7 +292,7 @@ defmodule ASN1 do
 import SwiftASN1\nimport Crypto\nimport Foundation\n
 @usableFromInline struct #{name}: DERImplicitlyTaggable, Hashable, Sendable {
     @inlinable static var defaultIdentifier: ASN1Identifier { .sequence }\n#{fields}#{ctor}
-     #{kek};\n
+     #{kek} \n
      }
 """
 
@@ -699,7 +699,11 @@ public struct #{name} : Hashable, Sendable, Comparable {
 
   def compileValue(_pos, name, type, value, _mod), do: (print ~c'Unhandled value definition ~p : ~p = ~p ~n', [name, type, value] ; [])
   def compileClass(_pos, name, _mod, type), do: (print ~c'Unhandled class definition ~p : ~p~n', [name, type] ; [])
-  def compilePType(_pos, name, args, type), do: (print ~c'Unhandled PType definition ~p : ~p(~p)~n', [name, type, args] ; [])
+  def compilePType(_pos, name, args, type) do
+      setEnv(name, "ANY")
+      print ~c'Unhandled PType definition ~p : ~p(~p)~n', [name, type, args]
+      []
+  end
   def compileModule(_pos, _name, _defid, _tagdefault, _exports, _imports), do: []
 
   def sequence(name, fields, modname, saveFlag) do
