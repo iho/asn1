@@ -1158,7 +1158,7 @@ defmodule ASN1.RustEmitter do
         der::{self, DERParseable, DERSerializable, Serializer},
         errors::ASN1Error,
     };
-    use bytes;
+    use bytes::BufMut;
     use super::*;
     """
   end
@@ -1359,9 +1359,6 @@ defmodule ASN1.RustEmitter do
     impl DERParseable for #{rust_name} {
         fn from_der_node(node: ASN1Node) -> Result<Self, ASN1Error> {
             der::sequence(node, ASN1Identifier::SEQUENCE, |nodes| {
-                let all_nodes: Vec<ASN1Node> = nodes.collect();
-                let mut iter = all_nodes.into_iter().peekable();
-                let nodes = &mut iter;
     #{emit_sequence_decoder_body(rust_name, fields)}
             })
         }
@@ -1442,17 +1439,11 @@ defmodule ASN1.RustEmitter do
                 {
                     let mut mh = Serializer::new();
                     #{implicit_serialize}
-                    let mut bytes = mh.serialized_bytes().to_vec();
-                    if bytes.len() > 0 {
-                        let is_constructed = (bytes[0] & 0x20) != 0;
+                    if !mh.buffer.is_empty() {
+                        let is_constructed = (mh.buffer[0] & 0x20) != 0;
                         let tag_byte = 0x80 | (if is_constructed { 0x20 } else { 0 }) | (#{num} as u8);
-                        bytes[0] = tag_byte;
-                        let node = ASN1Node {
-                            identifier: ASN1Identifier::new(#{num}, #{cls}),
-                            encoded_bytes: bytes.into(),
-                            content: rust_asn1::asn1::Content::Primitive(bytes::Bytes::new()),
-                        };
-                        node.serialize(serializer)?;
+                        mh.buffer[0] = tag_byte;
+                        serializer.buffer.put_slice(&mh.buffer);
                     }
                 }
                 """
@@ -1842,17 +1833,11 @@ defmodule ASN1.RustEmitter do
                                Self::#{variant}(val) => {
                                    let mut mh = Serializer::new();
                                    DERSerializable::serialize(#{val_ref}, &mut mh)?;
-                                   let mut bytes = mh.serialized_bytes().to_vec();
-                                   if bytes.len() > 0 {
-                                       let is_constructed = (bytes[0] & 0x20) != 0;
+                                   if !mh.buffer.is_empty() {
+                                       let is_constructed = (mh.buffer[0] & 0x20) != 0;
                                        let tag_byte = 0x80 | (if is_constructed { 0x20 } else { 0 }) | (#{num} as u8);
-                                       bytes[0] = tag_byte;
-                                       let node = ASN1Node {
-                                           identifier: ASN1Identifier::new(#{num}, #{cls}),
-                                           encoded_bytes: bytes.into(),
-                                           content: rust_asn1::asn1::Content::Primitive(bytes::Bytes::new()),
-                                       };
-                                       node.serialize(serializer)?;
+                                       mh.buffer[0] = tag_byte;
+                                       serializer.buffer.put_slice(&mh.buffer);
                                    }
                                },
                     """
@@ -2088,21 +2073,21 @@ defmodule ASN1.RustEmitter do
                   if String.starts_with?(inner_type, "Vec") do
                     elem_type = vector_element(inner_type)
                     if is_raw_node?(elem_type) do
-                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek().map(|n| n.clone()) { if let rust_asn1::asn1::Content::Constructed(collection) = &node.content { nodes.next(); Some(collection.clone().into_iter().collect::<Vec<#{elem_type}>>()) } else { None } } else { None };"
+                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek() { if let rust_asn1::asn1::Content::Constructed(collection) = node.content { nodes.next(); Some(collection.into_iter().collect::<Vec<#{elem_type}>>()) } else { None } } else { None };"
                     else
                       elem_type_fish = String.replace(elem_type, "<", "::<")
                       call = "#{elem_type_fish}::from_der_node(child)"
-                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek().map(|n| n.clone()) { if let rust_asn1::asn1::Content::Constructed(collection) = &node.content { nodes.next(); match collection.clone().into_iter().map(|child| #{call}).collect::<Result<_, _>>() { Ok(v) => Some(v), Err(_) => None } } else { None } } else { None };"
+                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek() { if let rust_asn1::asn1::Content::Constructed(collection) = node.content { nodes.next(); match collection.into_iter().map(|child| #{call}).collect::<Result<_, _>>() { Ok(v) => Some(v), Err(_) => None } } else { None } } else { None };"
                     end
                   else
                     if String.starts_with?(inner_type, "Box<") do
                       inner = strip_generic(inner_type, "Box<")
                       inner_fish = String.replace(inner, "<", "::<")
-                      call = if is_raw_node?(inner), do: "Ok(node.clone())", else: "#{inner_fish}::from_der_node(node.clone())"
-                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek().map(|n| n.clone()) { match #{call} { Ok(val) => { nodes.next(); Some(Box::new(val)) }, Err(_) => None } } else { None };"
+                      call = if is_raw_node?(inner), do: "Ok(node)", else: "#{inner_fish}::from_der_node(node)"
+                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek() { match #{call} { Ok(val) => { nodes.next(); Some(Box::new(val)) }, Err(_) => None } } else { None };"
                     else
-                      call = if is_raw_node?(inner_type), do: "Ok(node.clone())", else: "#{inner_type_fish}::from_der_node(node.clone())"
-                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek().map(|n| n.clone()) { match #{call} { Ok(val) => { nodes.next(); Some(val) }, Err(_) => None } } else { None };"
+                      call = if is_raw_node?(inner_type), do: "Ok(node)", else: "#{inner_type_fish}::from_der_node(node)"
+                      "            let #{rust_field}: #{field_type} = if let Some(node) = nodes.peek() { match #{call} { Ok(val) => { nodes.next(); Some(val) }, Err(_) => None } } else { None };"
                     end
                   end
                 end
@@ -2284,6 +2269,7 @@ defmodule ASN1.RustEmitter do
 
     """
     #{decoders}
+                while nodes.next().is_some() {}
                 Ok(Self {
     #{assignments}
                 })
