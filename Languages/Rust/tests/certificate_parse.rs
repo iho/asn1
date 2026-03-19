@@ -1,6 +1,7 @@
 // Certificate parsing test suite - Rust equivalent of Swift's showCertificateData
 // Tests parsing X.509 certificates from DER-encoded bytes
 
+use bytes::Bytes;
 use rust_asn1::der::{self, DERParseable};
 use asn1_suite::AuthenticationFramework_Certificate;
 
@@ -28,7 +29,7 @@ fn test_parse_certificate() {
     ];
 
     // Parse DER bytes into ASN.1 nodes
-    let root_node = der::parse(cert_der).expect("Failed to parse DER bytes");
+    let root_node = der::parse_bytes(Bytes::from_static(cert_der)).expect("Failed to parse DER bytes");
 
     // Parse into Certificate structure
     let cert = AuthenticationFramework_Certificate::from_der_node(root_node)
